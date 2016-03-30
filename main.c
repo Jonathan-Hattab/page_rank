@@ -11,43 +11,11 @@
 #include <mpi.h>
 #include "generator.h"
 #include "matrix.h"
-
-// INT POWER
-int int_pow(int base, int exp){
-    int result = 1;
-    for(int i = 0; i < exp; i++) result *= base;
-    return result;
-}
-
-void propagateResult(int step, int myrank, int size, double * local_result, int dim, MPI_Status * status, int startStep){
-    if(myrank % int_pow(2, step) == 0){
-        if(myrank + int_pow(2, step-1) < size){
-            double * received_result = NULL;
-            received_result = malloc(dim * dim * sizeof(double));
-            if(received_result == NULL) exit(0);
-            
-            MPI_Recv(received_result, dim * dim, MPI_DOUBLE, myrank + int_pow(2, step-1), step +  startStep, MPI_COMM_WORLD, status);
-            
-            mergeMatrixes(local_result, received_result, dim);
-            
-            free(received_result);
-        }
-        
-        if(int_pow(2, step) < size){
-            return propagateResult(step + 1, myrank, size, local_result, dim, status, startStep);
-        }
-        return;
-    }
-    else{
-        MPI_Send(local_result, dim * dim, MPI_DOUBLE, myrank - int_pow(2, step-1), step + startStep, MPI_COMM_WORLD);
-        free(local_result);
-        return;
-    }
-}
+#include "page.h"
 
 int main(int argc, char * argv[]) {
     // The Dimension of the original square matrices
-    int dim = 10;
+    int dim = 30;
     
     int myrank;
     int size;
@@ -65,128 +33,215 @@ int main(int argc, char * argv[]) {
     }
     
     double * local_column_band  = NULL;
-    double * local_row_band     = NULL;
-    int local_rowsInBand = 0;
+    int local_bandWidth = 0;
     
     /* ========================= PREPARATION DE BASE DE L'EXERCICE =========================== //
         Le Processeur n°0 :
-            Crée les deux matrices de travail.
-            Découpe les matrice en bandes ± équitables mais les bandes correspondantes de chaque matrice sont de même taille.
-            Envoie la hauteur des bandes et les deux bandes aux autres processeurs.
+            Crée la matrice de page rank.
+            Découpe la matrice en bandes verticales ± équitables.
+            Envoie la largeurs des bandes et les bandes aux autres processeurs.
         Les autres processeurs :
-            Reçoivent la hauteur de leur bandes et leurs deux bandes.
+            Reçoivent la largeur de leur bande et leur bande.
     */
     if (myrank == 0){
-        srand((unsigned)time(NULL));
+        srand((unsigned)time(NULL)); // Initialization for the random function
         
-        double * primaryMatrix1 = getMatrix(dim);
-        double * matrix2        = getMatrix(dim);
+        double * matrix = getPageRankMatrix(dim);
         
-        // Uncomment to view the global matrix and the global vector
-        /*
-        printf("Matrix 1 = \n");
-        printMatrix(primaryMatrix1, dim, dim);
-        printf("\nMatrix 2 = \n");
-        printMatrix(matrix2, dim, dim);
-        */
+        // Uncomment to view the page rank matrix
         
-        // In order to split the first matrix in column bands using the same function as for row bands, we rotate it.
-        double * matrix1 = rotateMatrix(primaryMatrix1, dim);
-        free(primaryMatrix1);
-         
+        printf("Page Rank Matrix (see it transposed) = \n");
+        printMatrix(matrix, dim, dim);
+        
+        
         int startRow = 0;
         
         for(int bandNumber = 0; bandNumber < size; bandNumber++){
             int rowsLeft = dim - startRow;
 
-            int rowsInBand = ceil((double)rowsLeft / (double)(size - bandNumber));
+            int bandWidth = ceil((double)rowsLeft / (double)(size - bandNumber));
             
-            double * columnBand = getBand(matrix1, dim, dim, startRow, rowsInBand);
-            double * rowBand    = getBand(matrix2, dim, dim, startRow, rowsInBand);
+            double * columnBand = getBand(matrix, dim, dim, startRow, bandWidth);
             
             // Uncomment to view the coresponding band of the matrix and the associated sub-vector
             /*
             printf("\nSub-Division n°%d\n", bandNumber);
             printf("\tColumn Band : \n");
-            printMatrix(columnBand, rowsInBand, dim);
-            printf("\tRow Band : \n");
-            printMatrix(rowBand, rowsInBand, dim);
+            printMatrix(columnBand, bandWidth, dim);
             */
 
             if(bandNumber == 0){
-                local_rowsInBand    = rowsInBand;
+                local_bandWidth     = bandWidth;
                 local_column_band   = columnBand;
-                local_row_band      = rowBand;
             }
             else{
-                MPI_Send(&rowsInBand,   1,              MPI_INT,    bandNumber, 1, MPI_COMM_WORLD);
-                MPI_Send(columnBand,  rowsInBand * dim, MPI_DOUBLE, bandNumber, 2, MPI_COMM_WORLD);
-                MPI_Send(rowBand,     rowsInBand * dim, MPI_DOUBLE, bandNumber, 3, MPI_COMM_WORLD);
+                MPI_Send(&bandWidth,   1,              MPI_INT,    bandNumber, 1, MPI_COMM_WORLD);
+                MPI_Send(columnBand,  bandWidth * dim, MPI_DOUBLE, bandNumber, 2, MPI_COMM_WORLD);
                 
                 free(columnBand);
-                free(rowBand);
             }
             
-            startRow += rowsInBand;
+            startRow += bandWidth;
         }
         
-        free(matrix1);
-        free(matrix2);
+        free(matrix);
     }
     else{
-        MPI_Recv(&local_rowsInBand, 1,                        MPI_INT,    0, 1, MPI_COMM_WORLD, &status);
+        MPI_Recv(&local_bandWidth, 1,                        MPI_INT,    0, 1, MPI_COMM_WORLD, &status);
         
-        local_column_band   = malloc(dim * local_rowsInBand * sizeof(double));
-        local_row_band      = malloc(dim * local_rowsInBand * sizeof(double));
-        if(local_column_band == NULL || local_row_band == NULL) exit(0);
-        MPI_Recv(local_column_band, local_rowsInBand * dim,   MPI_DOUBLE, 0, 2, MPI_COMM_WORLD, &status);
-        MPI_Recv(local_row_band,    local_rowsInBand * dim,   MPI_DOUBLE, 0, 3, MPI_COMM_WORLD, &status);
+        local_column_band   = malloc(dim * local_bandWidth * sizeof(double));
+        if(local_column_band == NULL) exit(0);
+        MPI_Recv(local_column_band, local_bandWidth * dim,   MPI_DOUBLE, 0, 2, MPI_COMM_WORLD, &status);
     }
     
     // ======================================= EXERCICE ====================================== //
-    // Uncomments to view the local band, the local vector and the full vector stored in the processor 1
+    // Uncomments to view the local band, the local vector and the full vector stored in the processor 0
     /*
-    if(myrank == 1){
-         printf("\nLocal Band : \n");
-         printMatrix(local_band, local_rowsInBand, dim);
-         printf("\nLocal Vector : \n");
-         printMatrix(local_vector, local_rowsInBand, 1);
-         printf("\nFull Vector : \n");
-         printMatrix(fullVector, dim, 1);
-    }
-     */
-    
-    // PHASE DE CALCUL
-    double * result = submatrixSubmatrixProduct(local_column_band, local_row_band, dim, local_rowsInBand, myrank);
-
-    /*
-    if(myrank == 0){
-        printf("\nLocal rows in band : %d", local_rowsInBand);
-        printf("\nLocal Result : \n");
-        printMatrix(result, dim, dim);
-    }
+    printf("\n[%d] Local Column Band : \n", myrank);
+    printMatrix(local_column_band, local_bandWidth, dim);
     */
     
+    double * result = NULL;
+
+    if(myrank == 0){
+        result = malloc(dim * sizeof(double));
+        if(result == NULL) exit(0);
+        for(int i = 0; i < dim; i++) result[i] = 1;
+    }
+    
+    double * local_subVector = NULL;
+    
+    double precision = 0.001;
+    double error = 0;
+    int iteration = 0;
+    int maxIterations = 100;
+    
+    // Approach solution with iterative method
+    do{
+        iteration++;
+        
+        if(myrank == 0){
+            int external_bandWidth = 0;
+            int startRow = 0;
+            
+            for(int i = 0; i < size; i++){
+                if(i == myrank) external_bandWidth = local_bandWidth;
+                else{
+                    MPI_Recv(&external_bandWidth, 1, MPI_INT, i, 2 + i, MPI_COMM_WORLD, &status);
+                }
+                
+                double * subVector = getBand(result, dim, 1, startRow, external_bandWidth);
+                
+                if(i == myrank){
+                    local_subVector = subVector;
+                }
+                else{
+                    MPI_Send(subVector, external_bandWidth, MPI_DOUBLE, i, 2 + i + size, MPI_COMM_WORLD);
+                    free(subVector);
+                }
+                
+                startRow += external_bandWidth;
+            }
+        }else{
+            MPI_Send(&local_bandWidth, 1,                  MPI_INT,    0, 2 + myrank,          MPI_COMM_WORLD);
+            
+            local_subVector = malloc(local_bandWidth * sizeof(double));
+            if(local_subVector == NULL) exit(0);
+            MPI_Recv(local_subVector,   local_bandWidth,   MPI_DOUBLE, 0, 2 + myrank + size,   MPI_COMM_WORLD, &status);
+        }
+        
+        // PHASE DE CALCUL
+        double * previousResult = result;
+        
+        result = submatrixSubvectorProduct(local_column_band, local_subVector, dim, local_bandWidth);
+        /*
+        printf("\nSub Result n°%d at iteration n°%d :\n", myrank, iteration);
+        printMatrix(result, dim, 1);
+        fflush(stdout);
+        */
+        propagateResult(1, myrank, size, result, dim, 1, &status, 2 + 2 * size);
+        
+        if(myrank == 0){
+            error = computeError(result, previousResult, dim);
+            free(previousResult);
+        }
+        
+        MPI_Bcast(&error, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        
+        if(myrank == 0){
+            /*
+            printf("\nResult at iteration n°%d :\n", iteration);
+            printMatrix(result, dim, 1);
+            printf("\nError at iteration n°%d : %f\n", iteration, error);
+            fflush(stdout);
+            */
+        }
+    }while(error > precision  && iteration <= maxIterations);
     
     free(local_column_band);
-    free(local_row_band);
     
-    // RENVOI DU RESULTAT AU PROCESSEUR 0
-    propagateResult(1, myrank, size, result, dim, &status, 3);
+    // Sort ranking in parallel
+    MPI_Datatype page_type;
+    getPageDataType(&page_type);
+    struct Page * local_ranking = NULL;
     
     if(myrank == 0){
-        // The result is transposed so we have to rotate the matrix back.
-        double * computedMatrix = NULL;
-        computedMatrix = malloc(dim * dim * sizeof(double));
-        if(computedMatrix == NULL) exit(0);
+        // Transform score list to Page list
+        struct Page * ranking = NULL;
+        ranking = malloc(dim * (sizeof(struct Page)));
+        if(ranking == NULL) exit(0);
         
-        computedMatrix = rotateMatrix(result, dim);
+        for(int i = 0; i < dim; i++){
+            ranking[i].score = result[i];
+            ranking[i].page_index = i;
+        }
+        
         free(result);
         
-        // Printing the result
+        int external_bandWidth = 0;
+        int startRow = 0;
+        
+        for(int i = 0; i < size; i++){
+            if(i == myrank) external_bandWidth = local_bandWidth;
+            else{
+                MPI_Recv(&external_bandWidth, 1, MPI_INT, i, 2 + i, MPI_COMM_WORLD, &status);
+            }
+            
+            struct Page * subRanking = &ranking[startRow];
+            
+            if(i == myrank){
+                local_ranking = subRanking;
+            }
+            else{
+                MPI_Send(subRanking, external_bandWidth, page_type, i, 2 + i + size, MPI_COMM_WORLD);
+            }
+            
+            startRow += external_bandWidth;
+        }
+    }else{
+        MPI_Send(&local_bandWidth, 1, MPI_INT, 0, 2 + myrank, MPI_COMM_WORLD);
+        
+        local_ranking = malloc(local_bandWidth * sizeof(struct Page));
+        if(local_ranking == NULL) exit(0);
+        MPI_Recv(local_ranking, local_bandWidth, page_type, 0, 2 + myrank + size, MPI_COMM_WORLD, &status);
+    }
+    
+    MPI_Type_free(&page_type);
+    
+    struct Page * sortedRanking = sortRanking(local_ranking, local_bandWidth);
+    
+    /*
+    printf("\n[%d] Finished Computing Local Result : \n", myrank);
+    printRanking(sortedRanking, local_bandWidth);
+    */
+     
+    sortedRanking = propagateRanking(1, myrank, size, sortedRanking, local_bandWidth, &status, 2 + 2 * size);
+    
+    if(myrank == 0){
         printf("\nFinished Computing Result : \n");
-        printMatrix(computedMatrix, dim, dim);
-        free(computedMatrix);
+        printRanking(sortedRanking, dim);
+        
+        free(sortedRanking);
     }
     
     MPI_Finalize();

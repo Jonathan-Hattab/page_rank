@@ -64,22 +64,22 @@ double * matrixVectorProduct(double * matrix, double * vector, int nbRows, int n
     
     return result;
 }
-double * submatrixSubvectorProduct(double * submatrix, double * subVector, int nbRows, int nbColumns){
+double * submatrixSubvectorProduct(double * submatrix, double * subVector, int dim, int bandWidth){
     double * result = NULL;
-    result = malloc(nbRows * sizeof(double));
+    result = malloc(dim * sizeof(double));
     if (result == NULL) exit(0);
     
-    for(int j = 0; j < nbRows; j++){
-        result[j] = 0;
+    for(int i = 0; i < dim; i++){
+        result[i] = 0;
     }
-    for(int i = 0; i < nbColumns; i++){
-        for(int j = 0; j < nbRows; j++){
-            result[i] += submatrix[i*nbRows + j] * subVector[i];
+    for(int i = 0; i < dim; i++){
+        for(int j = 0; j < bandWidth; j++){
+            result[i] += submatrix[i + j * dim] * subVector[j];
         }
     }
     return result;
 }
-double * submatrixSubmatrixProduct(double * submatrix1, double * submatrix2, int dim, int bandWidth, int myrank){
+double * submatrixSubmatrixProduct(double * submatrix1, double * submatrix2, int dim, int bandWidth){
     double * result = NULL;
     result = malloc(dim * dim * sizeof(double));
     if (result == NULL) exit(0);
@@ -93,9 +93,6 @@ double * submatrixSubmatrixProduct(double * submatrix1, double * submatrix2, int
         for(int j = 0; j < dim; j++){
             for(int k = 0; k < bandWidth; k++){
                 result[i*dim + j] += submatrix1[j + k * dim] * submatrix2[i + k * dim];
-                if(myrank == 0){
-                    //printf("\n(%d, %d, (%d)) : %f * %f = %f", i, j, k, submatrix1[j*dim+k], submatrix2[i*dim + k], result[i*dim + j]);
-                }
             }
         }
     }
@@ -103,10 +100,47 @@ double * submatrixSubmatrixProduct(double * submatrix1, double * submatrix2, int
 }
 
 // MERGING
-void mergeMatrixes(double * matrix1, double * matrix2, int dim){
-    for(int i = 0; i < dim; i++){
-        for(int j = 0; j < dim; j++){
-            matrix1[i*dim + j] += matrix2[i*dim + j];
+void mergeMatrixes(double * matrix1, double * matrix2, int nbRows, int nbColumns){
+    for(int i = 0; i < nbColumns; i++){
+        for(int j = 0; j < nbRows; j++){
+            matrix1[i*nbRows + j] += matrix2[i*nbRows + j];
         }
+    }
+}
+
+// NORME
+double computeError(double * vector1, double * vector2, int dim){
+    double error = 0;
+    for(int i = 0; i < dim; i++){
+        error += (vector1[i] - vector2[i]) * (vector1[i] - vector2[i]);
+    }
+    
+    return error;
+}
+
+// PROPAGATE RESULT
+void propagateResult(int step, int myrank, int size, double * local_result, int nbRows, int nbColumns, MPI_Status * status, int startStep){
+    if(myrank % int_pow(2, step) == 0){
+        if(myrank + int_pow(2, step-1) < size){
+            double * received_result = NULL;
+            received_result = malloc(nbRows * nbColumns * sizeof(double));
+            if(received_result == NULL) exit(0);
+            
+            MPI_Recv(received_result, nbRows * nbColumns, MPI_DOUBLE, myrank + int_pow(2, step-1), step +  startStep, MPI_COMM_WORLD, status);
+            
+            mergeMatrixes(local_result, received_result, nbRows, nbColumns);
+            
+            free(received_result);
+        }
+        
+        if(int_pow(2, step) < size){
+            return propagateResult(step + 1, myrank, size, local_result, nbRows, nbColumns, status, startStep);
+        }
+        return;
+    }
+    else{
+        MPI_Send(local_result, nbRows * nbColumns, MPI_DOUBLE, myrank - int_pow(2, step-1), step + startStep, MPI_COMM_WORLD);
+        free(local_result);
+        return;
     }
 }

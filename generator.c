@@ -49,6 +49,7 @@ double * getPageRankMatrix(int dim){
                 total++;
             }
         }
+        if(total == 0) continue;
         for(int j = 0; j < dim; j++) matrix[i*dim + j] /= total;
         
     }
