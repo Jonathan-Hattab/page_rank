@@ -39,6 +39,8 @@ double * getPageRankMatrix(int dim){
     matrix = malloc(dim * dim * sizeof(double));
     if (matrix == NULL) exit(0);
     
+    double alpha = 0.85;
+    
     for(int i = 0; i < dim; i++){
         int total = 0;
         for(int j = 0; j < dim; j++){
@@ -49,8 +51,13 @@ double * getPageRankMatrix(int dim){
                 total++;
             }
         }
-        if(total == 0) continue;
-        for(int j = 0; j < dim; j++) matrix[i*dim + j] /= total;
+        if(total == 0){
+            for(int j = 0; j < dim; j++) matrix[i*dim + j] = 1 / dim;
+        }
+        else{
+            for(int j = 0; j < dim; j++) matrix[i*dim + j] = matrix[i*dim + j] * alpha / total + (1 - alpha) / dim;
+        }
+        
         
     }
     return matrix;

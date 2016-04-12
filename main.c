@@ -14,8 +14,10 @@
 #include "page.h"
 
 int main(int argc, char * argv[]) {
+    double start_time = MPI_Wtime();
+    
     // The Dimension of the original square matrices
-    int dim = 30;
+    int dim = 10;
     
     int myrank;
     int size;
@@ -94,6 +96,8 @@ int main(int argc, char * argv[]) {
         MPI_Recv(local_column_band, local_bandWidth * dim,   MPI_DOUBLE, 0, 2, MPI_COMM_WORLD, &status);
     }
     
+    double preparation_time = MPI_Wtime() - start_time;
+    
     // ======================================= EXERCICE ====================================== //
     // Uncomments to view the local band, the local vector and the full vector stored in the processor 0
     /*
@@ -114,7 +118,7 @@ int main(int argc, char * argv[]) {
     double precision = 0.001;
     double error = 0;
     int iteration = 0;
-    int maxIterations = 100;
+    int maxIterations = 1000;
     
     // Approach solution with iterative method
     do{
@@ -170,6 +174,10 @@ int main(int argc, char * argv[]) {
         
         if(myrank == 0){
             /*
+            double iteration_time = MPI_Wtime() - preparation_time - start_time;
+            printf("Iteration (%d) finished at : %f\n", iteration, iteration_time);
+            */
+            /*
             printf("\nResult at iteration n°%d :\n", iteration);
             printMatrix(result, dim, 1);
             printf("\nError at iteration n°%d : %f\n", iteration, error);
@@ -178,7 +186,14 @@ int main(int argc, char * argv[]) {
         }
     }while(error > precision  && iteration <= maxIterations);
     
+    if(myrank == 0){
+        printf("\n%d iterations done\n", iteration);
+    }
+    
+    
     free(local_column_band);
+    
+    double scoring_time = MPI_Wtime() - preparation_time - start_time;
     
     // Sort ranking in parallel
     MPI_Datatype page_type;
@@ -238,12 +253,22 @@ int main(int argc, char * argv[]) {
     sortedRanking = propagateRanking(1, myrank, size, sortedRanking, local_bandWidth, &status, 2 + 2 * size);
     
     if(myrank == 0){
+        
         printf("\nFinished Computing Result : \n");
         printRanking(sortedRanking, dim);
         
         free(sortedRanking);
     }
     
+    double sorting_time = MPI_Wtime() - scoring_time - start_time;
+    
     MPI_Finalize();
+    
+    if(myrank == 0){
+        printf("\nTimes :\n");
+        printf("Preparation : %f\n", preparation_time);
+        printf("Scoring : %f\n", scoring_time);
+        printf("Sorting : %f\n", sorting_time);
+    }
     return 0;
 }

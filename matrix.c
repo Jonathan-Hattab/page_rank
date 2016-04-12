@@ -115,6 +115,8 @@ double computeError(double * vector1, double * vector2, int dim){
         error += (vector1[i] - vector2[i]) * (vector1[i] - vector2[i]);
     }
     
+    error = sqrt(error);
+    
     return error;
 }
 

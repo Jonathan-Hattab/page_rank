@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <mpi.h>
+#include <math.h>
 #include "tools.h"
 
 double * getBand(double * matrix, int nbRows, int nbColumns, int startRow, int rowsInBand);
